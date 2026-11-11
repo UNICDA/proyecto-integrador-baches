@@ -1,7 +1,7 @@
-fastapi==0.104.1
-uvicorn==0.24.0.post1
-sqlalchemy==2.0.23
-geoalchemy2==0.14.2
+fastapi
+uvicorn
+sqlalchemy
+geoalchemy2
 psycopg2-binary
 alembic==1.12.1
 celery==5.3.4
