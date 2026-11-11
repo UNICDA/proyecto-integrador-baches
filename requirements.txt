@@ -2,8 +2,9 @@ fastapi==0.104.1
 uvicorn==0.24.0.post1
 sqlalchemy==2.0.23
 geoalchemy2==0.14.2
-psycopg2-binary==2.9.9
+psycopg2-binary
 alembic==1.12.1
 celery==5.3.4
 redis==5.0.1
 boto3==1.33.13
+python-dotenv==1.0.0
