@@ -9,3 +9,6 @@ redis
 boto3==1.33.13
 python-dotenv==1.0.0
 kombu
+passlib[bcrypt]
+email-validator
+bcrypt
