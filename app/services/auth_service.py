@@ -1,5 +1,6 @@
 import bcrypt
 import jwt
+from app.models.catalogs import UserRole
 from datetime import datetime, timedelta
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -28,20 +29,25 @@ class AuthService:
         return user
 
     @staticmethod
-    def create_token_response(user: User) -> dict:
-        """Genera el JWT y construye el diccionario completo de respuesta del token."""
-        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    def create_token_response(db: Session, user: User) -> dict:
+        """Genera el JWT y construye la respuesta inyectando nombre y nombre de rol."""
         
-        # Payload del token
+        # Buscar el nombre del rol en la base de datos (ej. "CITIZEN")
+        role = db.query(UserRole).filter(UserRole.id == user.role_id).first()
+        role_name = role.code if role else "UNKNOWN"    
+
+        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+
+        # Payload enriquecido
         to_encode = {
             "sub": str(user.id),
-            "role_id": user.role_id,
+            "name": user.full_name,
+            "role": role_name,
             "exp": expire
         }
-        
+
         encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-        
-        # Retorna la estructura completa delegando esta lógica fuera del controlador
+
         return {
             "access_token": encoded_jwt,
             "token_type": "bearer",

@@ -13,4 +13,4 @@ def login(user_in: UserLogin, db: Session = Depends(get_db)):
     Recibe las credenciales, delega la validación y la emisión del token al servicio.
     """
     user = AuthService.authenticate_user(db, user_in)
-    return AuthService.create_token_response(user)
+    return AuthService.create_token_response(db, user)

@@ -1,5 +1,8 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 # Importar los routers que acabamos de crear
 from app.api.v1 import auth, catalogs, users
@@ -9,6 +12,51 @@ app = FastAPI(
     description="Sistema inteligente para la detección y priorización de baches",
     version="1.0.0"
 )
+
+# Manejador para errores HTTP lanzados manualmente (ej. 400, 401, 404)
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": True,
+            "code": exc.status_code,
+            "message": str(exc.detail),
+            "details": None
+        }
+    )
+
+# Manejador para errores de validación de Pydantic (Cambiado a 400 Bad Request)
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=400,
+        content={
+            "error": True,
+            "code": 400,
+            "message": "Error de validación en los datos enviados.",
+            "details": jsonable_encoder(exc.errors())
+        }
+    )
+
+# ... tus otros imports ...
+
+# Manejador GLOBAL para cualquier error no controlado (Fuerza el formato en errores 500)
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    # Imprimimos el error real en la terminal para que el desarrollador pueda depurarlo
+    print(f"Error interno no controlado: {str(exc)}") 
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": True,
+            "code": 500,
+            "message": "Ha ocurrido un error interno en el servidor.",
+            # Envolvemos el detalle del error en nuestra estructura estándar de lista
+            "details": [{"msg": str(exc)}] 
+        }
+    )
 
 # Configuración de CORS para permitir solicitudes desde cualquier origen (útil para desarrollo y pruebas)
 app.add_middleware(
