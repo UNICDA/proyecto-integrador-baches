@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Importar los routers que acabamos de crear
-from app.api.v1 import catalogs, users
+from app.api.v1 import auth, catalogs, users
 
 app = FastAPI(
     title="API de Baches SDE",
@@ -22,6 +22,7 @@ app.add_middleware(
 # Integrar los routers (Step 4)
 app.include_router(catalogs.router, prefix="/api/v1/catalogs", tags=["Catálogos"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["Usuarios"])
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["Autenticación"])
 
 # Endpoint de prueba y salud del sistema
 @app.get("/health", tags=["Sistema"])

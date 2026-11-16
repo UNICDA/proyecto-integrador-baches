@@ -12,3 +12,4 @@ kombu
 passlib[bcrypt]
 email-validator
 bcrypt
+PyJWT
