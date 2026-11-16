@@ -71,7 +71,8 @@ services:
       - db
       - redis
       - minio
-
+    environment:
+      - C_FORCE_ROOT=1
 volumes:
   pgdata:
   redisdata:
