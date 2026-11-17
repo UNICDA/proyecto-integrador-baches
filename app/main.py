@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 # Importar los routers que acabamos de crear
-from app.api.v1 import auth, catalogs, users
+from app.api.v1 import auth, catalogs, routes, users
 
 app = FastAPI(
     title="API de Baches SDE",
@@ -39,8 +39,6 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         }
     )
 
-# ... tus otros imports ...
-
 # Manejador GLOBAL para cualquier error no controlado (Fuerza el formato en errores 500)
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -58,6 +56,31 @@ async def global_exception_handler(request: Request, exc: Exception):
         }
     )
 
+# Manejadores para errores HTTP específicos (404 y 405) con formato consistente
+@app.exception_handler(404)
+async def custom_404_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": True,
+            "code": 404,
+            "message": "Not Found",
+            "details": [{"msg": "El recurso o ruta solicitada no existe."}]
+        }
+    )
+
+@app.exception_handler(405)
+async def custom_405_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=405,
+        content={
+            "error": True,
+            "code": 405,
+            "message": "Method Not Allowed",
+            "details": [{"msg": "El método HTTP no está permitido para esta ruta."}]
+        }
+    )
+
 # Configuración de CORS para permitir solicitudes desde cualquier origen (útil para desarrollo y pruebas)
 app.add_middleware(
     CORSMiddleware,
@@ -71,6 +94,7 @@ app.add_middleware(
 app.include_router(catalogs.router, prefix="/api/v1/catalogs", tags=["Catálogos"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["Usuarios"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Autenticación"])
+app.include_router(routes.router, prefix="/api/v1/routes", tags=["Rutas Viales"])
 
 # Endpoint de prueba y salud del sistema
 @app.get("/health", tags=["Sistema"])
