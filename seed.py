@@ -63,6 +63,17 @@ def run_seed():
             ON CONFLICT (code) DO NOTHING;
         """))
 
+        # 6. Rutas Viales (Motor Geoespacial Base)
+        print("- Insertando road_routes...")
+        conn.execute(text("""
+            INSERT INTO road_routes (name, road_geometry, buffer_meters, priority_weight) VALUES
+            ('Avenida España', ST_GeomFromText('MULTILINESTRING((-69.86603 18.47214, -69.86175 18.47353, -69.85587 18.47467, -69.84976 18.47545))', 4326), 15.00, 1.00),
+            ('Avenida San Vicente de Paúl', ST_GeomFromText('MULTILINESTRING((-69.85583 18.47481, -69.85324 18.48123, -69.84958 18.48834, -69.84560 18.49445))', 4326), 15.00, 1.00),
+            ('Avenida Charles de Gaulle', ST_GeomFromText('MULTILINESTRING((-69.84650 18.49520, -69.84020 18.50210, -69.83540 18.50980, -69.82910 18.51730))', 4326), 15.00, 1.00),
+            ('Avenida Ecológica', ST_GeomFromText('MULTILINESTRING((-69.83561 18.49752, -69.82845 18.49523, -69.82012 18.49411, -69.81155 18.49380))', 4326), 15.00, 1.00)
+            ON CONFLICT (name) DO NOTHING;
+        """))
+
     print("¡Siembra de datos completada con éxito!")
 
 if __name__ == "__main__":
