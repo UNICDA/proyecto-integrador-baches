@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import Optional, Tuple
 from uuid import UUID
@@ -10,14 +11,22 @@ from sqlalchemy.orm import Session
 from app.models.catalogs import ProcessingStatus
 from app.models.potholes import CitizenReport, ImageEvidence
 from app.models.users import User
-from app.schemas.report_schema import CitizenReportResponse, ImageEvidenceResponse
+from app.schemas.report_schema import (
+    CitizenReportResponse,
+    CitizenReportSummary,
+    ImageEvidenceResponse,
+    PaginatedCitizenReportResponse,
+)
 from app.services.storage_service import StorageService
+from app.worker.tasks import process_citizen_report
+
+logger = logging.getLogger(__name__)
 
 
 class ReportService:
     """
-    Servicio de dominio encargado de la ingesta, validación de idempotencia
-    y persistencia espacial de los reportes ciudadanos.
+    Servicio de dominio encargado de la ingesta, validación de idempotencia,
+    encolado asíncrono y consulta de reportes ciudadanos.
     """
 
     @staticmethod
@@ -64,8 +73,8 @@ class ReportService:
         citizen_comment: Optional[str] = None,
     ) -> Tuple[CitizenReportResponse, bool]:
         """
-        Registra un reporte ciudadano garantizando idempotencia, integridad de imagen
-        y persistencia atómica entre MinIO y PostgreSQL/PostGIS.
+        Registra un reporte ciudadano garantizando idempotencia, integridad de imagen,
+        persistencia atómica entre MinIO y PostgreSQL/PostGIS, y encolado en Celery.
 
         Retorna una tupla (CitizenReportResponse, is_duplicate).
         """
@@ -198,11 +207,173 @@ class ReportService:
             StorageService.delete_file(image_s3_key)
             raise
 
+        # 6. Encolar tarea asíncrona en Celery con resiliencia ante caída de Redis
+        final_status = received_status
+        queued_status = (
+            db.query(ProcessingStatus)
+            .filter(ProcessingStatus.code == "QUEUED_CELERY")
+            .first()
+        )
+
+        if queued_status is not None:
+            try:
+                # Se actualiza a QUEUED_CELERY antes del despacho para evitar condiciones de carrera con el worker
+                new_report.processing_status_id = queued_status.id
+                db.commit()
+
+                process_citizen_report.delay(str(new_report.id))
+                final_status = queued_status
+            except Exception as exc:
+                logger.error(
+                    "No se pudo encolar el reporte '%s' en Celery/Redis; se mantiene en RECEIVED: %s",
+                    new_report.id,
+                    str(exc),
+                )
+                db.rollback()
+                new_report.processing_status_id = received_status.id
+                db.commit()
+                db.refresh(new_report)
+                final_status = received_status
+        else:
+            logger.error(
+                "Estado 'QUEUED_CELERY' no encontrado en base de datos; el reporte '%s' permanece en RECEIVED.",
+                new_report.id,
+            )
+
         response_data = ReportService._build_report_response(
             report=new_report,
             latitude=latitude,
             longitude=longitude,
-            processing_status_code=received_status.code,
+            processing_status_code=final_status.code,
             evidence=new_evidence,
         )
         return response_data, False
+
+    @staticmethod
+    def get_user_reports(
+        db: Session,
+        user: User,
+        limit: int = 20,
+        offset: int = 0,
+        status_code: Optional[str] = None,
+    ) -> PaginatedCitizenReportResponse:
+        """
+        Obtiene el historial paginado de reportes pertenecientes al usuario autenticado,
+        ordenados del más reciente al más antiguo y con filtro opcional por estado.
+        """
+        if limit < 1 or limit > 100:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El parámetro 'limit' debe estar comprendido entre 1 y 100.",
+            )
+
+        if offset < 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El parámetro 'offset' no puede ser negativo.",
+            )
+
+        base_filter = [CitizenReport.user_id == user.id]
+
+        if status_code is not None:
+            status_obj = (
+                db.query(ProcessingStatus)
+                .filter(ProcessingStatus.code == status_code)
+                .first()
+            )
+            if status_obj is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"El estado de procesamiento '{status_code}' no es válido.",
+                )
+            base_filter.append(CitizenReport.processing_status_id == status_obj.id)
+
+        total = db.query(CitizenReport).filter(*base_filter).count()
+
+        rows = (
+            db.query(
+                CitizenReport.id,
+                CitizenReport.citizen_comment,
+                CitizenReport.captured_at,
+                func.ST_Y(CitizenReport.capture_location).label("latitude"),
+                func.ST_X(CitizenReport.capture_location).label("longitude"),
+                ProcessingStatus.code.label("status_code"),
+                ImageEvidence.image_s3_key,
+            )
+            .join(ProcessingStatus, CitizenReport.processing_status_id == ProcessingStatus.id)
+            .outerjoin(ImageEvidence, ImageEvidence.report_id == CitizenReport.id)
+            .filter(*base_filter)
+            .order_by(CitizenReport.captured_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        items = [
+            CitizenReportSummary(
+                id=report_id,
+                processing_status_code=proc_status_code,
+                citizen_comment=comment,
+                latitude=float(lat),
+                longitude=float(lon),
+                captured_at=captured_at,
+                image_s3_key=image_s3_key,
+            )
+            for report_id, comment, captured_at, lat, lon, proc_status_code, image_s3_key in rows
+        ]
+
+        return PaginatedCitizenReportResponse(
+            total=total,
+            limit=limit,
+            offset=offset,
+            items=items,
+        )
+
+    @staticmethod
+    def get_report_by_id(
+        db: Session,
+        report_id: UUID,
+        current_user: User,
+    ) -> CitizenReportResponse:
+        """
+        Obtiene el detalle de un reporte ciudadano por su ID validando reglas de propiedad:
+        un usuario CITIZEN solo puede consultar sus propios reportes.
+        """
+        row = (
+            db.query(
+                CitizenReport,
+                func.ST_Y(CitizenReport.capture_location).label("latitude"),
+                func.ST_X(CitizenReport.capture_location).label("longitude"),
+                ProcessingStatus.code.label("status_code"),
+                ImageEvidence,
+            )
+            .join(ProcessingStatus, CitizenReport.processing_status_id == ProcessingStatus.id)
+            .outerjoin(ImageEvidence, ImageEvidence.report_id == CitizenReport.id)
+            .filter(CitizenReport.id == report_id)
+            .first()
+        )
+
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Reporte ciudadano no encontrado.",
+            )
+
+        report, lat, lon, proc_status_code, evidence = row
+
+        user_role = getattr(current_user, "token_role", None) or (
+            current_user.role.code if current_user.role else None
+        )
+        if user_role == "CITIZEN" and report.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes permisos para consultar reportes de otros usuarios.",
+            )
+
+        return ReportService._build_report_response(
+            report=report,
+            latitude=float(lat),
+            longitude=float(lon),
+            processing_status_code=proc_status_code,
+            evidence=evidence,
+        )

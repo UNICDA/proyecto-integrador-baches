@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -38,3 +38,26 @@ class CitizenReportResponse(BaseModel):
     evidence: Optional[ImageEvidenceResponse] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CitizenReportSummary(BaseModel):
+    """Esquema resumido para tarjetas del historial personal de reportes ciudadanos."""
+
+    id: UUID
+    processing_status_code: str
+    citizen_comment: Optional[str] = None
+    latitude: float
+    longitude: float
+    captured_at: datetime
+    image_s3_key: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PaginatedCitizenReportResponse(BaseModel):
+    """Esquema paginado para el historial de reportes ciudadanos."""
+
+    total: int
+    limit: int
+    offset: int
+    items: List[CitizenReportSummary]
