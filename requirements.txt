@@ -6,10 +6,12 @@ psycopg2-binary
 alembic==1.12.1
 celery[redis]
 redis
-boto3==1.33.13
+boto3
 python-dotenv==1.0.0
 kombu
 passlib[bcrypt]
 email-validator
 bcrypt
 PyJWT
+Pillow
+python-multipart
