@@ -1,19 +1,19 @@
-import os
 from celery import Celery
 
-# Lee la URL de Redis desde el .env, o usa el valor por defecto de Docker
-redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+from app.core.config import settings
 
+# Instancia principal de Celery configurada con Redis como broker y backend
 celery_app = Celery(
-    "baches_worker",
-    broker=redis_url,
-    backend=redis_url
+    "pothole_worker",
+    broker=settings.REDIS_URL,
+    backend=settings.REDIS_URL,
+    include=["app.worker.tasks"],
 )
 
 celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",
-    timezone="America/Santo_Domingo",
+    timezone="UTC",
     enable_utc=True,
 )
