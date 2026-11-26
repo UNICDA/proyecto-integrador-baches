@@ -23,4 +23,9 @@ class Settings:
     MAX_IMAGE_SIZE_BYTES: int = int(os.getenv("MAX_IMAGE_SIZE_BYTES", 10 * 1024 * 1024))
     ALLOWED_IMAGE_MIME_TYPES: list[str] = ["image/jpeg", "image/png", "image/webp"]
 
+    # Parámetros de consolidación espacial e inferencia de IA
+    POTHOLE_DEDUP_RADIUS_METERS: float = float(os.getenv("POTHOLE_DEDUP_RADIUS_METERS"))
+    AI_CONFIDENCE_THRESHOLD: float = float(os.getenv("AI_CONFIDENCE_THRESHOLD"))
+    AI_MODEL_VERSION: str = os.getenv("AI_MODEL_VERSION")
+
 settings = Settings()

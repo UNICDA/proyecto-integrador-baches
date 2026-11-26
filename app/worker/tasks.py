@@ -5,6 +5,8 @@ from app.core.database import SessionLocal
 from app.models import users as _users_models
 from app.models.catalogs import ProcessingStatus
 from app.models.potholes import CitizenReport, ImageEvidence
+from app.services.ai_service import AIService
+from app.services.pothole_consolidation_service import PotholeConsolidationService
 from app.worker.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -27,8 +29,8 @@ def _get_processing_status(db, code: str) -> ProcessingStatus:
 @celery_app.task(name="process_citizen_report", bind=True, max_retries=3)
 def process_citizen_report(self, report_id: str) -> dict:
     """
-    Tarea asíncrona que ejecuta el pipeline de procesamiento de un reporte ciudadano.
-    Transiciona el estado del reporte: QUEUED_CELERY -> PROCESSING_AI -> COMPLETED (o FAILED).
+    Tarea asíncrona que ejecuta el pipeline de análisis de IA y consolidación espacial
+    para un reporte ciudadano: QUEUED_CELERY -> PROCESSING_AI -> COMPLETED (o FAILED).
     """
     db = SessionLocal()
     report = None
@@ -72,28 +74,65 @@ def process_citizen_report(self, report_id: str) -> dict:
         report.processing_status_id = processing_status.id
         db.commit()
 
-        # 2. Gancho de inferencia (Placeholder limpio para RF-06)
+        # 2. Validar evidencia y ejecutar inferencia de IA desacoplada
         if not evidence.image_s3_key:
             raise ValueError(
                 f"La evidencia '{evidence.id}' del reporte '{report_id}' no posee image_s3_key."
             )
 
         logger.info(
-            "Procesando reporte ciudadano | report_id=%s | image_s3_key=%s | sha256_hash=%s",
+            "Iniciando inferencia de IA | report_id=%s | image_s3_key=%s | sha256_hash=%s",
             report_id,
             evidence.image_s3_key,
             evidence.sha256_hash,
         )
 
-        # TODO (RF-06): Ejecutar inferencia PyTorch/YOLO y deduplicación espacial PostGIS
+        inference = AIService.analyze_evidence(
+            image_s3_key=evidence.image_s3_key,
+            width_px=evidence.width_px,
+            height_px=evidence.height_px,
+        )
 
-        # 3. Marcar el reporte como COMPLETED al finalizar sin errores
+        # 3. Ejecutar consolidación espacial, cruce de rutas y priorización explicable
+        consolidated_pothole = PotholeConsolidationService.consolidate_detection(
+            db=db,
+            report=report,
+            evidence=evidence,
+            inference=inference,
+        )
+
+        # 4. Marcar el reporte como COMPLETED y confirmar atómicamente potholes + ai_detections + estado
         completed_status = _get_processing_status(db, "COMPLETED")
         report.processing_status_id = completed_status.id
         db.commit()
 
-        logger.info("Procesamiento completado exitosamente para el reporte '%s'.", report_id)
-        return {"status": "completed", "report_id": report_id}
+        if consolidated_pothole is not None:
+            action_label = (
+                "creado como nuevo candidato"
+                if consolidated_pothole.total_citizen_reports == 1
+                and consolidated_pothole.total_technical_detections == 0
+                else "deduplicado sobre bache existente"
+            )
+            logger.info(
+                "Procesamiento completado | report_id=%s | pothole=%s (%s) | priority_score=%.2f",
+                report_id,
+                consolidated_pothole.readable_code,
+                action_label,
+                float(consolidated_pothole.priority_score),
+            )
+            return {
+                "status": "completed",
+                "report_id": report_id,
+                "pothole_id": str(consolidated_pothole.id),
+                "readable_code": consolidated_pothole.readable_code,
+                "priority_score": float(consolidated_pothole.priority_score),
+            }
+
+        logger.info(
+            "Procesamiento completado sin consolidación de bache | report_id=%s",
+            report_id,
+        )
+        return {"status": "completed", "report_id": report_id, "pothole_id": None}
 
     except Exception as exc:
         db.rollback()
